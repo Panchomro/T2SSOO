@@ -7,11 +7,6 @@
 
 extern FILE *global_memory_file;
 
-#define FRAME_SIZE 32768 // 32KB
-#define MEMORY_DATA_OFFSET 139392
-#define FRAME_BITMAP_OFFSET 8192 // 8KB
-#define FRAME_COUNT 65536
-
 int os_read_file(osrmsFile *file_desc, char *dest)
 {
     if (global_memory_file == NULL)
@@ -61,9 +56,21 @@ int os_read_file(osrmsFile *file_desc, char *dest)
             return -1;
         }
 
-        fread(buffer, 1, bytes_from_frame, global_memory_file);
-        fwrite(buffer, 1, bytes_from_frame, dest_file);
+        if (fread(buffer, 1, bytes_from_frame, global_memory_file) != bytes_from_frame)
+        {
+            printf("Error: Failed to read memory file.\n");
+            free(buffer);
+            fclose(dest_file);
+            return -1;
+        }
 
+        if (fwrite(buffer, 1, bytes_from_frame, dest_file) != bytes_from_frame)
+        {
+            printf("Error: Failed to write to destination file.\n");
+            free(buffer);
+            fclose(dest_file);
+            return -1;
+        }
         free(buffer);
 
         bytes_read += bytes_from_frame;
@@ -96,4 +103,172 @@ int find_free_frame(unsigned char *frame_bitmap)
         }
     }
     return -1;
+}
+
+int os_write_file(osrmsFile *file_desc, char *src)
+{
+    if (global_memory_file == NULL)
+    {
+        return -1;
+    }
+
+    if (file_desc == NULL || src == NULL)
+    {
+        printf("Error: Invalid file descriptor or source path.\n");
+        return -1;
+    }
+
+    FILE *src_file = fopen(src, "rb");
+    if (src_file == NULL)
+    {
+        printf("Error: Could not open source file.\n");
+        return -1;
+    }
+
+    fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
+    unsigned char frame_bitmap[FRAME_COUNT / 8];
+    fread(frame_bitmap, 1, sizeof(frame_bitmap), global_memory_file);
+
+    unsigned int bytes_written = 0;
+    unsigned int free_space_in_frame = FRAME_SIZE;
+    unsigned int frame_number = find_free_frame(frame_bitmap);
+    unsigned int offset_within_frame = 0;
+
+    if (frame_number == -1)
+    {
+        printf("Error: No free frames available.\n");
+        fclose(src_file);
+        return bytes_written;
+    }
+
+    unsigned char buffer[FRAME_SIZE];
+    size_t bytes_to_write;
+
+    while ((bytes_to_write = fread(buffer, 1, FRAME_SIZE, src_file)) > 0)
+    {
+        while (bytes_to_write > 0)
+        {
+            long frame_offset = MEMORY_DATA_OFFSET + (frame_number * FRAME_SIZE) + offset_within_frame;
+            unsigned int bytes_in_this_frame = (bytes_to_write < free_space_in_frame) ? bytes_to_write : free_space_in_frame;
+
+            fseek(global_memory_file, frame_offset, SEEK_SET);
+            fwrite(buffer, 1, bytes_in_this_frame, global_memory_file);
+
+            bytes_written += bytes_in_this_frame;
+            bytes_to_write -= bytes_in_this_frame;
+            offset_within_frame += bytes_in_this_frame;
+            free_space_in_frame -= bytes_in_this_frame;
+
+            if (free_space_in_frame == 0)
+            {
+                frame_number = find_free_frame(frame_bitmap);
+                if (frame_number == -1)
+                {
+                    printf("Error: No free frames available.\n");
+                    fclose(src_file);
+                    return bytes_written;
+                }
+
+                offset_within_frame = 0;
+                free_space_in_frame = FRAME_SIZE;
+            }
+        }
+    }
+
+    fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
+    fwrite(frame_bitmap, sizeof(frame_bitmap), 1, global_memory_file);
+
+    file_desc->size = bytes_written;
+    fclose(src_file);
+
+    return bytes_written;
+}
+
+void os_close(osrmsFile *file_desc)
+{
+    if (file_desc == NULL)
+    {
+        printf("Error: Invalid file descriptor.\n");
+        return;
+    }
+
+    // Free any dynamically allocated memory associated with the file descriptor
+    free(file_desc);
+
+    printf("File closed successfully.\n");
+}
+
+osrmsFile *os_open(int process_id, char *file_name, char mode)
+{
+    if (global_memory_file == NULL)
+    {
+        perror("Memory file not mounted");
+        return NULL;
+    }
+
+    if (mode != 'r' && mode != 'w')
+    {
+        perror("Invalid file mode. Use 'r' for read or 'w' for write.");
+        return NULL;
+    }
+
+    long pcb_offset = PCB_TABLE_START + (process_id * PCB_ENTRY_SIZE);
+
+    fseek(global_memory_file, pcb_offset, SEEK_SET);
+    unsigned char pcb_entry[PCB_ENTRY_SIZE];
+    fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
+
+    for (int i = 0; i < FILE_TABLE_SIZE; i++)
+    {
+        unsigned char *file_entry = &pcb_entry[FILE_TABLE_OFFSET + (i * FILE_ENTRY_SIZE)];
+        unsigned char file_validity = file_entry[0];
+        char entry_file_name[15];
+        strncpy(entry_file_name, (char *)&file_entry[1], 14);
+        entry_file_name[14] = '\0';
+
+        if (mode == 'r' && file_validity == 0x01 && strcmp(entry_file_name, file_name) == 0)
+        {
+            osrmsFile *file = (osrmsFile *)malloc(sizeof(osrmsFile));
+            strncpy(file->file_name, entry_file_name, 15);
+            file->process_id = process_id;
+            file->size = *(unsigned int *)&file_entry[15];
+            file->vaddr = *(unsigned int *)&file_entry[19];
+            file->mode = mode;
+            return file;
+        }
+
+        if (mode == 'w' && file_validity == 0x01 && strcmp(entry_file_name, file_name) == 0)
+        {
+            return NULL;
+        }
+
+        if (mode == 'w' && file_validity == 0x00)
+        {
+            file_entry[0] = 0x01;
+            strncpy((char *)&file_entry[1], file_name, 14);
+
+            // Initialize the file size and virtual address (for now, size = 0)
+            unsigned int initial_size = 0;
+            unsigned int initial_vaddr = 0x0; // Assuming this is the starting address (needs adjustment based on the system)
+
+            memcpy(&file_entry[15], &initial_size, 4);
+            memcpy(&file_entry[19], &initial_vaddr, 4);
+
+            // Write the updated PCB entry back into memory
+            fseek(global_memory_file, pcb_offset, SEEK_SET);
+            fwrite(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
+
+            // Allocate memory for the osrmsFile structure and return it
+            osrmsFile *file = (osrmsFile *)malloc(sizeof(osrmsFile));
+            strncpy(file->file_name, file_name, 15);
+            file->process_id = process_id;
+            file->size = initial_size;
+            file->vaddr = initial_vaddr;
+            file->mode = mode;
+            return file;
+        }
+    }
+
+    // If no matching file is found in 'r' mode, or no space for a new file in 'w' mode, return NULL
+    return NULL;
 }

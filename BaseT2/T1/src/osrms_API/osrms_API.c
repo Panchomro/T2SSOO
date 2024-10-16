@@ -6,20 +6,6 @@
 
 FILE *global_memory_file = NULL;
 
-#define PCB_TABLE_SIZE 8192 // 8KB
-#define PCB_ENTRY_SIZE 256  // 256B
-#define PCB_TABLE_START 0
-#define PROCESS_NAME_SIZE 11
-#define MAX_PROCESSES (PCB_TABLE_SIZE / PCB_ENTRY_SIZE)
-#define FILE_ENTRY_SIZE 23 // 23B
-#define FILE_TABLE_SIZE 5
-#define FILE_TABLE_OFFSET 2
-#define FRAME_BITMAP_SIZE 8192     // 65536 bits = 8192 bytes
-#define FRAME_COUNT 65536          // 65536 frames
-#define FRAME_BITMAP_OFFSET 139392 // Offset for the Frame Bitmap based on the memory layout#define TP_BITMAP_SIZE 128      // 1024 bits = 128 bytes
-#define TP_COUNT 1024              // 1024 page tables
-#define TP_BITMAP_OFFSET 8192      // Assuming page table bitmap starts after the PCB table (e.g., at 8KB)
-
 void os_mount(char *memory_path)
 {
     global_memory_file = fopen(memory_path, "r+b");
@@ -103,7 +89,7 @@ void os_ls_files(int process_id)
     unsigned char pcb_entry[PCB_ENTRY_SIZE];
     fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
 
-    printf("Files for process ID%d:\n", process_id);
+    printf("Files for process ID %d:\n", process_id);
 
     int files_found = 0;
     for (int i = 0; i < FILE_TABLE_SIZE; i++)
@@ -169,6 +155,55 @@ void os_frame_bitmap()
 
 void os_tp_bitmap()
 {
+    if (global_memory_file == NULL)
+    {
+        printf("Error: Memory not mounted.\n");
+        return;
+    }
+
+    // Seek to the beginning of the Bitmap of Page Tables in the memory
+    fseek(global_memory_file, TP_BITMAP_OFFSET, SEEK_SET);
+
+    // Allocate buffer to store the bitmap
+    unsigned char tp_bitmap[TP_BITMAP_SIZE];
+
+    // Read the Bitmap of Page Tables into the buffer
+    size_t read_count = fread(tp_bitmap, 1, TP_BITMAP_SIZE, global_memory_file);
+    if (read_count != TP_BITMAP_SIZE)
+    {
+        printf("Error: Failed to read the Bitmap of Page Tables.\n");
+        return;
+    }
+
+    // Variables to count occupied and free page tables
+    int occupied_tables = 0;
+    int free_tables = 0;
+
+    printf("Page Table Bitmap Status:\n");
+
+    // Iterate over each bit in the Bitmap of Page Tables
+    for (int i = 0; i < TP_COUNT; i++)
+    {
+        // Calculate which byte and bit within the byte corresponds to page table i
+        int byte_index = i / 8;
+        int bit_index = i % 8;
+
+        // Check if the bit is set (1 means occupied, 0 means free)
+        if (tp_bitmap[byte_index] & (1 << bit_index))
+        {
+            printf("Page Table %d: Occupied\n", i);
+            occupied_tables++;
+        }
+        else
+        {
+            printf("Page Table %d: Free\n", i);
+            free_tables++;
+        }
+    }
+
+    // Print the summary of free and occupied page tables
+    printf("Total Occupied Page Tables: %d\n", occupied_tables);
+    printf("Total Free Page Tables: %d\n", free_tables);
 }
 
 void os_start_process(int process_id, char *process_name)
@@ -250,79 +285,4 @@ void free_process_memory(int process_id)
     fwrite(frame_bitmap, FRAME_BITMAP_SIZE, 1, global_memory_file);
 
     printf("Memory freed for process ID %d.\n", process_id);
-}
-
-osrmsFile *os_open(int process_id, char *file_name, char mode)
-{
-    if (global_memory_file == NULL)
-    {
-        perror("Memory file not mounted");
-        return NULL;
-    }
-
-    if (mode != 'r' && mode != 'w')
-    {
-        perror("Invalid file mode. Use 'r' for read or 'w' for write.");
-        return NULL;
-    }
-
-    long pcb_offset = PCB_TABLE_START + (process_id * PCB_ENTRY_SIZE);
-
-    fseek(global_memory_file, pcb_offset, SEEK_SET);
-    unsigned char pcb_entry[PCB_ENTRY_SIZE];
-    fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
-
-    for (int i = 0; i < FILE_TABLE_SIZE; i++)
-    {
-        unsigned char *file_entry = &pcb_entry[FILE_TABLE_OFFSET + (i * FILE_ENTRY_SIZE)];
-        unsigned char file_validity = file_entry[0];
-        char entry_file_name[15];
-        strncpy(entry_file_name, (char *)&file_entry[1], 14);
-        entry_file_name[14] = '\0';
-
-        if (mode == 'r' && file_validity == 0x01 && strcmp(entry_file_name, file_name) == 0)
-        {
-            osrmsFile *file = (osrmsFile *)malloc(sizeof(osrmsFile));
-            strncpy(file->file_name, entry_file_name, 15);
-            file->process_id = process_id;
-            file->size = *(unsigned int *)&file_entry[15];
-            file->vaddr = *(unsigned int *)&file_entry[19];
-            file->mode = mode;
-            return file;
-        }
-
-        if (mode == 'w' && file_validity == 0x01 && strcmp(entry_file_name, file_name) == 0)
-        {
-            return NULL;
-        }
-
-        if (mode == 'w' && file_validity == 0x00)
-        {
-            file_entry[0] = 0x01;
-            strncpy((char *)&file_entry[1], file_name, 14);
-
-            // Initialize the file size and virtual address (for now, size = 0)
-            unsigned int initial_size = 0;
-            unsigned int initial_vaddr = 0x0; // Assuming this is the starting address (needs adjustment based on the system)
-
-            memcpy(&file_entry[15], &initial_size, 4);
-            memcpy(&file_entry[19], &initial_vaddr, 4);
-
-            // Write the updated PCB entry back into memory
-            fseek(global_memory_file, pcb_offset, SEEK_SET);
-            fwrite(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
-
-            // Allocate memory for the osrmsFile structure and return it
-            osrmsFile *file = (osrmsFile *)malloc(sizeof(osrmsFile));
-            strncpy(file->file_name, file_name, 15);
-            file->process_id = process_id;
-            file->size = initial_size;
-            file->vaddr = initial_vaddr;
-            file->mode = mode;
-            return file;
-        }
-    }
-
-    // If no matching file is found in 'r' mode, or no space for a new file in 'w' mode, return NULL
-    return NULL;
 }
