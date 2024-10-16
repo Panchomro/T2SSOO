@@ -144,7 +144,7 @@ void os_frame_bitmap()
         }
         else
         {
-            printf("Frame %d: Free\n", i);
+            //printf("Frame %d: Free\n", i);
             free_frames++;
         }
     }

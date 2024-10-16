@@ -30,7 +30,7 @@ OPT=-g # Guardar toda la información para poder debugear. No optimiza
 # -Wall    = (Warn All) Da aviso de todos los posibles errores de compilación
 # $(OPT)   = Nivel de optimización
 CFLAGS=-Wunused -Wall $(OPT)
-
+mak
 ###############################################################################
 # LIBRERÍAS                                                                   #
 ###############################################################################
