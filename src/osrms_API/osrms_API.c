@@ -210,34 +210,40 @@ void os_frame_bitmap()
         return;
     }
 
+ 
     fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
-    unsigned char frame_bitmap[FRAME_BITMAP_SIZE];
-    fread(frame_bitmap, FRAME_BITMAP_SIZE, 1, global_memory_file);
+    unsigned char frame_bitmap[8192];
+    fread(frame_bitmap, 1, 8192, global_memory_file);
+    fclose(global_memory_file);
 
-    int free_frames = 0;
-    int occupied_frames = 0;
+   
 
     printf("Frame Bitmap:\n");
 
-    for (int i = 0; i < FRAME_COUNT; i++)
-    {
-        int byte_index = i / 8;
-        int bit_index = i % 8;
+    int frames_ocupados = 0;
+    int frames_libres = 0;
 
-        if (frame_bitmap[byte_index] & (1 << bit_index))
-        {
-            // printf("Frame %d: Occupied\n", i);
-            occupied_frames++;
+    printf("Estado de cada frame (0: Libre, 1: Ocupado):\n");
+    for (int frame_index = 0; frame_index < 65536; frame_index++) {
+        int byte_index = frame_index / 8;
+        int bit_index = frame_index % 8;
+        int bit_value = (frame_bitmap[byte_index] >> bit_index) & 1;
+        printf("frame %d ", frame_index);
+       for (int bit = 0; bit < 8; bit++) {
+            int bit_value = (frame_bitmap[byte_index] >> bit) & 1;
+            printf("%d", bit_value);
         }
-        else
-        {
-            // printf("Frame %d: Free\n", i);
-            free_frames++;
+
+    printf("\n");
+        if (bit_value == 1) {
+            frames_ocupados++;
+        } else {
+            frames_libres++;
         }
     }
+    printf("Total de frames ocupados: %d\n", frames_ocupados);
+    printf("Total de frames libres: %d\n", frames_libres);
 
-    printf("Total Occupied Frames: %d\n", occupied_frames);
-    printf("Total Free Frames: %d\n", free_frames);
 }
 
 void os_tp_bitmap()

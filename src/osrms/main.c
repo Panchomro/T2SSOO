@@ -75,7 +75,7 @@ int main(int argc, char const *argv[])
     // os_close(file1);
 
     // Step 11: Print the frame bitmap
-    // os_frame_bitmap();
+    os_frame_bitmap();
 
     // Step 12: Print the page table bitmap
     // printf("\nPrinting the page table bitmap:\n");

@@ -22,7 +22,7 @@ extern FILE *global_memory_file;
 #define FILE_TABLE_OFFSET 13
 #define FRAME_BITMAP_SIZE 8192          // 65536 bits = 8192 bytes
 #define FRAME_COUNT 65536               // 65536 frames
-#define FRAME_BITMAP_OFFSET 136448      // Offset for the Frame Bitmap based on the memory layout#define TP_BITMAP_SIZE 128      // 1024 bits = 128 bytes
+#define FRAME_BITMAP_OFFSET 139392      // Offset for the Frame Bitmap based on the memory layout#define TP_BITMAP_SIZE 128      // 1024 bits = 128 bytes
 #define FRAME_SIZE 32768                // 32KB per frame
 #define TP_COUNT 1024                   // 1024 page tables
 #define TP_BITMAP_OFFSET PCB_TABLE_SIZE // Assuming page table bitmap starts after the PCB table (e.g., at 8KB)
