@@ -210,13 +210,19 @@ void os_frame_bitmap()
         return;
     }
 
- 
-    fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
-    unsigned char frame_bitmap[8192];
-    fread(frame_bitmap, 1, 8192, global_memory_file);
-    fclose(global_memory_file);
+    if (fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET) != 0) {
+        perror("fseek failed");
+        return;
+    }
 
-   
+    unsigned char frame_bitmap[8192];
+    size_t bytes_read = fread(frame_bitmap, 1, sizeof(frame_bitmap), global_memory_file);
+    if (bytes_read != sizeof(frame_bitmap)) {
+        perror("fread failed");
+        return;
+    }
+
+    // Removed fclose(global_memory_file); to prevent premature closing
 
     printf("Frame Bitmap:\n");
 
@@ -228,13 +234,13 @@ void os_frame_bitmap()
         int byte_index = frame_index / 8;
         int bit_index = frame_index % 8;
         int bit_value = (frame_bitmap[byte_index] >> bit_index) & 1;
-        printf("frame %d ", frame_index);
-       for (int bit = 0; bit < 8; bit++) {
-            int bit_value = (frame_bitmap[byte_index] >> bit) & 1;
-            printf("%d", bit_value);
-        }
+    //     printf("frame %d ", frame_index);
+    //    for (int bit = 0; bit < 8; bit++) {
+    //         int bit_value = (frame_bitmap[byte_index] >> bit) & 1;
+    //         printf("%d", bit_value);
+    //     }
 
-    printf("\n");
+    // printf("\n");
         if (bit_value == 1) {
             frames_ocupados++;
         } else {
@@ -243,8 +249,8 @@ void os_frame_bitmap()
     }
     printf("Total de frames ocupados: %d\n", frames_ocupados);
     printf("Total de frames libres: %d\n", frames_libres);
-
 }
+
 
 void os_tp_bitmap()
 {
@@ -280,7 +286,13 @@ void os_tp_bitmap()
         // Calculate which byte and bit within the byte corresponds to page table i
         int byte_index = i / 8;
         int bit_index = i % 8;
+    //     printf("Page %d ", i);
+    //    for (int bit = 0; bit < 8; bit++) {
+    //         int bit_value = (tp_bitmap[byte_index] >> bit) & 1;
+    //         printf("%d", bit_value);
+    //     }
 
+    // printf("\n");
         // Check if the bit is set (1 means occupied, 0 means free)
         if (tp_bitmap[byte_index] & (1 << bit_index))
         {
@@ -364,11 +376,10 @@ void os_finish_process(int process_id)
     int process_found = 0;
     long pcb_offset = -1;
 
-    // Recorrer los 32 PCBs para encontrar el ID del proceso que buscamos
+    // Find the PCB of the process
     for (int i = 0; i < MAX_PROCESSES; i++)
     {
-        // Cada PCB tiene un tamaño de 256 bytes
-        long current_pcb_offset = PCB_TABLE_START + (i * PCB_ENTRY_SIZE);
+        long current_pcb_offset = 0 + (i * PCB_ENTRY_SIZE);
         fseek(global_memory_file, current_pcb_offset, SEEK_SET);
 
         unsigned char pcb_entry[PCB_ENTRY_SIZE];
@@ -378,17 +389,15 @@ void os_finish_process(int process_id)
             return;
         }
 
-        // Verificar si el estado del proceso es 0x01 (en ejecución)
         unsigned char process_state = pcb_entry[0];
         if (process_state == 0x01)
         {
-            // Si el proceso está en ejecución, verificar el ID del proceso
-            unsigned char pcb_process_id = pcb_entry[1]; // Segundo byte es el ID del proceso
+            unsigned char pcb_process_id = pcb_entry[1];
             if (pcb_process_id == process_id)
             {
                 process_found = 1;
                 pcb_offset = current_pcb_offset;
-                break; // Hemos encontrado el PCB del proceso que buscábamos
+                break;
             }
         }
     }
@@ -399,7 +408,7 @@ void os_finish_process(int process_id)
         return;
     }
 
-    // Leer el PCB del proceso encontrado
+    // Read the PCB of the found process
     fseek(global_memory_file, pcb_offset, SEEK_SET);
     unsigned char pcb_entry[PCB_ENTRY_SIZE];
     if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
@@ -408,47 +417,105 @@ void os_finish_process(int process_id)
         return;
     }
 
-    // Liberar la memoria asignada al proceso
-    free_process_memory(process_id);
+    // Free the memory allocated to the process
+    free_process_memory(pcb_entry);
 
-    // Marcar el proceso como terminado cambiando el estado a 0x00
+    // Mark the process as terminated by changing the state to 0x00
     pcb_entry[0] = 0x00;
 
-    // Limpiar los demás datos del PCB
+    // Clear the rest of the PCB data
     memset(&pcb_entry[1], 0, PCB_ENTRY_SIZE - 1);
 
-    // Escribir el PCB actualizado de vuelta en memoria
+    // Write the updated PCB back to memory
     fseek(global_memory_file, pcb_offset, SEEK_SET);
     fwrite(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
 
     printf("Process with ID %d finished successfully.\n", process_id);
 }
 
-void free_process_memory(int process_id)
+void free_process_memory(unsigned char *pcb_entry)
 {
-    // Aquí puedes implementar la lógica para liberar la memoria utilizada por el proceso
-    // Asegúrate de actualizar correctamente el frame bitmap
+    // Read the Frame Bitmap
     fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
     unsigned char frame_bitmap[FRAME_BITMAP_SIZE];
-    fread(frame_bitmap, FRAME_BITMAP_SIZE, 1, global_memory_file);
+    fread(frame_bitmap, 1, FRAME_BITMAP_SIZE, global_memory_file);
 
-    // Aquí deberías recorrer la tabla de páginas o frames asociados al proceso
-    // y marcar los frames como libres. Actualmente, estamos liberando todos los frames,
-    // lo cual no es correcto, pero se ajusta a modo de ejemplo.
-    for (int i = 0; i < FRAME_COUNT; i++)
+    // Read the Bitmap of Page Tables
+    fseek(global_memory_file, TP_BITMAP_OFFSET, SEEK_SET);
+    unsigned char tp_bitmap[TP_BITMAP_SIZE];
+    fread(tp_bitmap, 1, TP_BITMAP_SIZE, global_memory_file);
+
+    // Access the process's first-level page table (128 bytes starting at byte 128 in PCB)
+    unsigned char *first_level_pt = &pcb_entry[128];
+
+    // For each entry in the first-level page table
+    for (int i = 0; i < 64; i++) // 64 entries of 2 bytes each
     {
-        int byte_index = i / 8;
-        int bit_index = i % 8;
+        unsigned short spt_number = 0;
+        memcpy(&spt_number, &first_level_pt[i * 2], 2); // Read 2 bytes
 
-        if (frame_bitmap[byte_index] & (1 << bit_index))
+        if (spt_number != 0) // If the entry is valid
         {
-            frame_bitmap[byte_index] &= ~(1 << bit_index); // Marcar el frame como libre
+            // Read the second-level page table
+            unsigned int spt_offset = SECOND_LEVEL_PT_OFFSET + (spt_number * 128); // Each SPT is 128 bytes
+            unsigned char second_level_pt[128];
+            fseek(global_memory_file, spt_offset, SEEK_SET);
+            fread(second_level_pt, 1, 128, global_memory_file);
+
+            int spt_empty = 1;
+
+            // For each entry in the second-level page table
+            for (int j = 0; j < 64; j++) // 64 entries of 2 bytes each
+            {
+                unsigned short pfn = 0;
+                memcpy(&pfn, &second_level_pt[j * 2], 2); // Read 2 bytes
+
+                if (pfn != 0) // If the entry is valid
+                {
+                    // Mark the frame as free in the frame bitmap
+                    int frame_index = pfn;
+                    int byte_index = frame_index / 8;
+                    int bit_index = frame_index % 8;
+
+                    frame_bitmap[byte_index] &= ~(1 << bit_index); // Set bit to 0 (free)
+
+                    // Clear the entry in the second-level page table
+                    memset(&second_level_pt[j * 2], 0, 2);
+
+                    spt_empty = 0;
+                }
+            }
+
+            // Write back the updated second-level page table
+            fseek(global_memory_file, spt_offset, SEEK_SET);
+            fwrite(second_level_pt, 1, 128, global_memory_file);
+
+            // Mark the second-level page table as free if empty
+            if (spt_empty)
+            {
+                int tp_index = spt_number;
+                int byte_index = tp_index / 8;
+                int bit_index = tp_index % 8;
+
+                tp_bitmap[byte_index] &= ~(1 << bit_index); // Set bit to 0 (free)
+            }
+
+            // Clear the entry in the first-level page table
+            memset(&first_level_pt[i * 2], 0, 2);
         }
     }
 
-    // Escribir el frame bitmap actualizado de vuelta en memoria
-    fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
-    fwrite(frame_bitmap, FRAME_BITMAP_SIZE, 1, global_memory_file);
+    // Write back the updated first-level page table in the PCB
+    fseek(global_memory_file, -PCB_ENTRY_SIZE + 128, SEEK_CUR); // Move back to PCB's first-level PT
+    fwrite(first_level_pt, 1, 128, global_memory_file);
 
-    printf("Memory freed for process ID %d.\n", process_id);
+    // Write back the updated Frame Bitmap
+    fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
+    fwrite(frame_bitmap, 1, FRAME_BITMAP_SIZE, global_memory_file);
+
+    // Write back the updated Bitmap of Page Tables
+    fseek(global_memory_file, TP_BITMAP_OFFSET, SEEK_SET);
+    fwrite(tp_bitmap, 1, TP_BITMAP_SIZE, global_memory_file);
+
+    printf("Memory freed for the process.\n");
 }

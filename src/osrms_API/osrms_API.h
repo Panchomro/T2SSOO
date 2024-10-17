@@ -27,6 +27,7 @@ extern FILE *global_memory_file;
 #define TP_COUNT 1024                   // 1024 page tables
 #define TP_BITMAP_OFFSET PCB_TABLE_SIZE // Assuming page table bitmap starts after the PCB table (e.g., at 8KB)
 #define TP_BITMAP_SIZE 128              // 1024 bits = 128 bytes
+#define SECOND_LEVEL_PT_OFFSET  8320 // 8192 + 128 = 8320 bytes
 
 void os_mount(char *memory_path);
 
@@ -52,8 +53,7 @@ void os_start_process(int process_id, char *process_name);
 void os_finish_process(int process_id);
 
 // Free the memory allocated to the process's frames
-void free_process_memory(int process_id);
-
+void free_process_memory(unsigned char *pcb_entry);
 // Open a file for a process, either in read or write mode
 
 // Read file contents into the destination path (to be implemented if needed)

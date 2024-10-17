@@ -197,6 +197,7 @@ void os_close(osrmsFile *file_desc)
     printf("File closed successfully.\n");
 }
 
+
 osrmsFile *os_open(int process_id, char *file_name, char mode)
 {
     if (global_memory_file == NULL)

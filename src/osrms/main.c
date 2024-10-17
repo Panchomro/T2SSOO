@@ -11,8 +11,8 @@ int main(int argc, char const *argv[])
     os_mount((char *)argv[1]);
 
     // resto de instrucciones
-    // int exist = os_exists(117, "facebook.png");
-    // if (exist == 1)
+    int exist = os_exists(117, "facebook.png");
+    if (exist == 1)
     // {
     //     printf("El archivo existe\n");
     // }
@@ -21,15 +21,15 @@ int main(int argc, char const *argv[])
     //     printf("El archivo no existe\n");
     // }
 
-    // os_start_process(117, "process1");
-    // os_start_process(118, "process2");
+    os_start_process(117, "process1");
+    os_start_process(118, "process2");
 
     // Step 3: List running processes
     printf("\nListing all running processes:\n");
     os_ls_processes();
 
     // Step 4: Open a file for writing
-    // printf("\nOpening a file 'file1.txt' for process 1 in write mode...\n");
+    printf("\nOpening a file 'file1.txt' for process 1 in write mode...\n");
     osrmsFile *file1 = os_open(117, "prueba.jpg", 'w');
     if (file1 != NULL)
     {
@@ -45,19 +45,17 @@ int main(int argc, char const *argv[])
         printf("Failed to open the file.\n");
     }
 
-    // // // Step 5: Write to the file
+    // // Step 5: Write to the file
     // printf("\nWriting contents from 'input.txt' to 'file1.txt' in memory...\n");
     // int bytes_written = os_write_file(file1, "../../input.txt");
     // printf("Bytes written: %d\n", bytes_written);
 
     // // // Step 6: Close the file
-    os_close(file1);
+    // os_close(file1);
 
-    // Step 7: List files of the process
     printf("\nListing all files for process ID 117:\n");
     os_ls_files(117);
 
-    // Step 8: Open the file for reading
     // printf("\nOpening 'file1.txt' for process 1 in read mode...\n");
     // file1 = os_open(117, "../../file1.txt", 'r');
     // if (file1 == NULL)
@@ -66,7 +64,6 @@ int main(int argc, char const *argv[])
     //     return 1;
     // }
 
-    // Step 9: Read the file contents back to a new file
     // printf("\nReading contents from 'file1.txt' in memory to 'output.txt'...\n");
     // int bytes_read = os_read_file(file1, "../../output.txt");
     // printf("Bytes read: %d\n", bytes_read);
@@ -74,21 +71,18 @@ int main(int argc, char const *argv[])
     // // Step 10: Close the file again
     // os_close(file1);
 
-    // Step 11: Print the frame bitmap
     os_frame_bitmap();
 
-    // Step 12: Print the page table bitmap
-    // printf("\nPrinting the page table bitmap:\n");
-    // os_tp_bitmap();
+    printf("\nPrinting the page table bitmap:\n");
+    
+    os_tp_bitmap();
 
-    // Step 13: Finish the process and free its resources
     // printf("\nFinishing process with ID 117...\n");
     // os_finish_process(117);
     // os_finish_process(118);
 
-    // Step 14: List processes again (to verify process termination)
     // printf("\nListing all running processes:\n");
-    os_ls_processes();
+    // os_ls_processes();
 
     printf("\nProgram finished successfully. All changes saved to '%s'.\n", argv[1]);
 
