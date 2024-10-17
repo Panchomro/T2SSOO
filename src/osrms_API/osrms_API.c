@@ -51,14 +51,52 @@ int os_exists(int process_id, char *file_name)
         return 0;
     }
 
-    long pcb_offset = PCB_TABLE_START + (process_id * PCB_ENTRY_SIZE);
+    int process_found = 0;
+    long pcb_offset = -1;
+
+    for (int i = 0; i < MAX_PROCESSES; i++)
+    {
+        long current_pcb_offset = PCB_TABLE_START + (i * PCB_ENTRY_SIZE);
+        fseek(global_memory_file, current_pcb_offset, SEEK_SET);
+
+        unsigned char pcb_entry[PCB_ENTRY_SIZE];
+        if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+        {
+            printf("Error: Could not read PCB entry at index %d.\n", i);
+            return 0;
+        }
+
+        unsigned char process_state = pcb_entry[0];
+        if (process_state == 0x01)
+        {
+            unsigned char pcb_process_id = pcb_entry[1];
+            if (pcb_process_id == process_id)
+            {
+                process_found = 1;
+                pcb_offset = current_pcb_offset;
+                break;
+            }
+        }
+    }
+
+    if (!process_found)
+    {
+        printf("Process with ID %d not found or not running.\n", process_id);
+        return 0;
+    }
+
     fseek(global_memory_file, pcb_offset, SEEK_SET);
     unsigned char pcb_entry[PCB_ENTRY_SIZE];
-    fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
+    if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+    {
+        printf("Error: Could not read PCB entry for process ID %d.\n", process_id);
+        return 0;
+    }
 
     for (int i = 0; i < FILE_TABLE_SIZE; i++)
     {
-        unsigned char *file_entry = &pcb_entry[FILE_TABLE_OFFSET + (i * FILE_ENTRY_SIZE)];
+        unsigned char *file_entry = &pcb_entry[13 + (i * FILE_ENTRY_SIZE)];
+
         unsigned char file_validity = file_entry[0];
         if (file_validity == 0x01)
         {
@@ -84,34 +122,83 @@ void os_ls_files(int process_id)
         return;
     }
 
-    long pcb_offset = PCB_TABLE_START + (process_id * PCB_ENTRY_SIZE);
+    int process_found = 0;
+    long pcb_offset = -1;
+
+    // Recorrer los 32 PCBs para encontrar el ID del proceso que buscamos
+    for (int i = 0; i < MAX_PROCESSES; i++)
+    {
+        // Cada PCB tiene un tamaño de 256 bytes
+        long current_pcb_offset = PCB_TABLE_START + (i * PCB_ENTRY_SIZE);
+        fseek(global_memory_file, current_pcb_offset, SEEK_SET);
+
+        unsigned char pcb_entry[PCB_ENTRY_SIZE];
+        if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+        {
+            printf("Error: Could not read PCB entry at index %d.\n", i);
+            return;
+        }
+
+        // Verificar si el estado del proceso es 0x01 (en ejecución)
+        unsigned char process_state = pcb_entry[0];
+        if (process_state == 0x01)
+        {
+            // Si el proceso está en ejecución, verificar el ID del proceso
+            unsigned char pcb_process_id = pcb_entry[1]; // Segundo byte es el ID del proceso
+            if (pcb_process_id == process_id)
+            {
+                process_found = 1;
+                pcb_offset = current_pcb_offset;
+                break; // Hemos encontrado el PCB del proceso que buscábamos
+            }
+        }
+    }
+
+    if (!process_found)
+    {
+        printf("Process with ID %d not found or not running.\n", process_id);
+        return;
+    }
+
+    // Leer el PCB del proceso encontrado
     fseek(global_memory_file, pcb_offset, SEEK_SET);
     unsigned char pcb_entry[PCB_ENTRY_SIZE];
-    fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
+    if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+    {
+        printf("Error: Could not read PCB entry for process ID %d.\n", process_id);
+        return;
+    }
 
-    printf("Files for process ID %d:\n", process_id);
+    printf("Process ID: %d\n", pcb_entry[1]); // Mostrar el ID del proceso
 
+    // Iterar sobre la tabla de archivos dentro del PCB
     int files_found = 0;
     for (int i = 0; i < FILE_TABLE_SIZE; i++)
     {
-        unsigned char *file_entry = &pcb_entry[FILE_TABLE_OFFSET + (i * FILE_ENTRY_SIZE)];
+        // Cada entrada de archivo tiene 23 bytes, y la tabla de archivos comienza en el byte 13 del PCB
+        unsigned char *file_entry = &pcb_entry[13 + (i * FILE_ENTRY_SIZE)];
+
+        // Verificar el byte de validez
         unsigned char file_validity = file_entry[0];
-        if (file_validity == 0x01)
+        if (file_validity == 0x01) // Si la entrada del archivo es válida
         {
-            char file_name[15];
-            strncpy(file_name, (char *)&file_entry[1], 14);
-            file_name[14] = '\0';
+            // Leer el nombre del archivo
+            char file_name[15] = {0};                       // 14 bytes para el nombre + 1 para el terminador null
+            strncpy(file_name, (char *)&file_entry[1], 14); // Copiar el nombre del archivo
 
-            unsigned int file_size = *(unsigned int *)&file_entry[15];
+            // Leer el tamaño del archivo (pequeño endian)
+            unsigned int file_size = 0;
+            memcpy(&file_size, &file_entry[15], sizeof(unsigned int)); // Copiar los 4 bytes del tamaño
 
-            printf("  - File Name: %s, Size: %u bytes\n", file_name, file_size);
+            // Mostrar el nombre y tamaño del archivo
+            printf("%s %u Bytes\n", file_name, file_size);
             files_found++;
         }
     }
 
     if (files_found == 0)
     {
-        printf("  No files found for this process.\n");
+        printf("No files found for this process.\n");
     }
 }
 
@@ -139,12 +226,12 @@ void os_frame_bitmap()
 
         if (frame_bitmap[byte_index] & (1 << bit_index))
         {
-            printf("Frame %d: Occupied\n", i);
+            // printf("Frame %d: Occupied\n", i);
             occupied_frames++;
         }
         else
         {
-            //printf("Frame %d: Free\n", i);
+            // printf("Frame %d: Free\n", i);
             free_frames++;
         }
     }
@@ -191,12 +278,12 @@ void os_tp_bitmap()
         // Check if the bit is set (1 means occupied, 0 means free)
         if (tp_bitmap[byte_index] & (1 << bit_index))
         {
-            printf("Page Table %d: Occupied\n", i);
+            // printf("Page Table %d: Occupied\n", i);
             occupied_tables++;
         }
         else
         {
-            printf("Page Table %d: Free\n", i);
+            // printf("Page Table %d: Free\n", i);
             free_tables++;
         }
     }
@@ -214,21 +301,48 @@ void os_start_process(int process_id, char *process_name)
         return;
     }
 
-    long pcb_offset = PCB_TABLE_START + (process_id * PCB_ENTRY_SIZE);
-    fseek(global_memory_file, pcb_offset, SEEK_SET);
-    unsigned char pcb_entry[PCB_ENTRY_SIZE] = {0};
-    pcb_entry[0] = 0x01;
-    pcb_entry[1] = (unsigned char)process_id;
+    int available_slot_found = 0;
+    long pcb_offset = -1;
 
-    strncpy((char *)&pcb_entry[2], process_name, PROCESS_NAME_SIZE);
+    for (int i = 0; i < MAX_PROCESSES; i++)
+    {
+        long current_pcb_offset = PCB_TABLE_START + (i * PCB_ENTRY_SIZE);
+        fseek(global_memory_file, current_pcb_offset, SEEK_SET);
+
+        unsigned char pcb_entry[PCB_ENTRY_SIZE];
+        if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+        {
+            printf("Error: Could not read PCB entry at index %d.\n", i);
+            return;
+        }
+
+        if (pcb_entry[0] == 0x00)
+        {
+            available_slot_found = 1;
+            pcb_offset = current_pcb_offset;
+            break;
+        }
+    }
+
+    if (!available_slot_found)
+    {
+        printf("No available slots to start a new process.\n");
+        return;
+    }
+
+    unsigned char new_pcb_entry[PCB_ENTRY_SIZE] = {0};
+    new_pcb_entry[0] = 0x01;
+    new_pcb_entry[1] = (unsigned char)process_id;
+
+    strncpy((char *)&new_pcb_entry[2], process_name, PROCESS_NAME_SIZE);
 
     for (int i = strlen(process_name); i < PROCESS_NAME_SIZE; i++)
     {
-        pcb_entry[2 + i] = '\0';
+        new_pcb_entry[2 + i] = '\0';
     }
 
     fseek(global_memory_file, pcb_offset, SEEK_SET);
-    fwrite(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
+    fwrite(new_pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
 
     printf("Process with ID %d and name %s started successfully.\n", process_id, process_name);
 }
@@ -241,23 +355,63 @@ void os_finish_process(int process_id)
         return;
     }
 
-    long pcb_offset = PCB_TABLE_START + (process_id * PCB_ENTRY_SIZE);
-    fseek(global_memory_file, pcb_offset, SEEK_SET);
-    unsigned char pcb_entry[PCB_ENTRY_SIZE];
-    fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
+    int process_found = 0;
+    long pcb_offset = -1;
 
-    if (pcb_entry[0] != 0x01)
+    // Recorrer los 32 PCBs para encontrar el ID del proceso que buscamos
+    for (int i = 0; i < MAX_PROCESSES; i++)
     {
-        printf("Process with ID %d is not running.\n", process_id);
+        // Cada PCB tiene un tamaño de 256 bytes
+        long current_pcb_offset = PCB_TABLE_START + (i * PCB_ENTRY_SIZE);
+        fseek(global_memory_file, current_pcb_offset, SEEK_SET);
+
+        unsigned char pcb_entry[PCB_ENTRY_SIZE];
+        if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+        {
+            printf("Error: Could not read PCB entry at index %d.\n", i);
+            return;
+        }
+
+        // Verificar si el estado del proceso es 0x01 (en ejecución)
+        unsigned char process_state = pcb_entry[0];
+        if (process_state == 0x01)
+        {
+            // Si el proceso está en ejecución, verificar el ID del proceso
+            unsigned char pcb_process_id = pcb_entry[1]; // Segundo byte es el ID del proceso
+            if (pcb_process_id == process_id)
+            {
+                process_found = 1;
+                pcb_offset = current_pcb_offset;
+                break; // Hemos encontrado el PCB del proceso que buscábamos
+            }
+        }
+    }
+
+    if (!process_found)
+    {
+        printf("Process with ID %d not found or not running.\n", process_id);
         return;
     }
 
+    // Leer el PCB del proceso encontrado
+    fseek(global_memory_file, pcb_offset, SEEK_SET);
+    unsigned char pcb_entry[PCB_ENTRY_SIZE];
+    if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+    {
+        printf("Error: Could not read PCB entry for process ID %d.\n", process_id);
+        return;
+    }
+
+    // Liberar la memoria asignada al proceso
     free_process_memory(process_id);
 
+    // Marcar el proceso como terminado cambiando el estado a 0x00
     pcb_entry[0] = 0x00;
 
+    // Limpiar los demás datos del PCB
     memset(&pcb_entry[1], 0, PCB_ENTRY_SIZE - 1);
 
+    // Escribir el PCB actualizado de vuelta en memoria
     fseek(global_memory_file, pcb_offset, SEEK_SET);
     fwrite(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
 
@@ -266,10 +420,15 @@ void os_finish_process(int process_id)
 
 void free_process_memory(int process_id)
 {
+    // Aquí puedes implementar la lógica para liberar la memoria utilizada por el proceso
+    // Asegúrate de actualizar correctamente el frame bitmap
     fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
     unsigned char frame_bitmap[FRAME_BITMAP_SIZE];
     fread(frame_bitmap, FRAME_BITMAP_SIZE, 1, global_memory_file);
 
+    // Aquí deberías recorrer la tabla de páginas o frames asociados al proceso
+    // y marcar los frames como libres. Actualmente, estamos liberando todos los frames,
+    // lo cual no es correcto, pero se ajusta a modo de ejemplo.
     for (int i = 0; i < FRAME_COUNT; i++)
     {
         int byte_index = i / 8;
@@ -277,10 +436,11 @@ void free_process_memory(int process_id)
 
         if (frame_bitmap[byte_index] & (1 << bit_index))
         {
-            frame_bitmap[byte_index] &= ~(1 << bit_index);
+            frame_bitmap[byte_index] &= ~(1 << bit_index); // Marcar el frame como libre
         }
     }
 
+    // Escribir el frame bitmap actualizado de vuelta en memoria
     fseek(global_memory_file, FRAME_BITMAP_OFFSET, SEEK_SET);
     fwrite(frame_bitmap, FRAME_BITMAP_SIZE, 1, global_memory_file);
 

@@ -192,7 +192,6 @@ void os_close(osrmsFile *file_desc)
         return;
     }
 
-    // Free any dynamically allocated memory associated with the file descriptor
     free(file_desc);
 
     printf("File closed successfully.\n");
@@ -212,11 +211,49 @@ osrmsFile *os_open(int process_id, char *file_name, char mode)
         return NULL;
     }
 
-    long pcb_offset = PCB_TABLE_START + (process_id * PCB_ENTRY_SIZE);
+    int process_found = 0;
+    long pcb_offset = -1;
+
+    for (int i = 0; i < MAX_PROCESSES; i++)
+    {
+        long current_pcb_offset = PCB_TABLE_START + (i * PCB_ENTRY_SIZE);
+        fseek(global_memory_file, current_pcb_offset, SEEK_SET);
+
+        unsigned char pcb_entry[PCB_ENTRY_SIZE];
+        if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+        {
+            printf("Error: Could not read PCB entry at index %d.\n", i);
+            return NULL;
+        }
+
+        unsigned char process_state = pcb_entry[0];
+        if (process_state == 0x01)
+        {
+            unsigned char pcb_process_id = pcb_entry[1];
+            if (pcb_process_id == process_id)
+            {
+                process_found = 1;
+                pcb_offset = current_pcb_offset;
+                break;
+            }
+        }
+    }
+
+    if (!process_found)
+    {
+        printf("Process with ID %d not found or not running.\n", process_id);
+        return NULL;
+    }
 
     fseek(global_memory_file, pcb_offset, SEEK_SET);
     unsigned char pcb_entry[PCB_ENTRY_SIZE];
-    fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
+    if (fread(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file) != 1)
+    {
+        printf("Error: Could not read PCB entry for process ID %d.\n", process_id);
+        return NULL;
+    }
+
+    int file_count = 0;
 
     for (int i = 0; i < FILE_TABLE_SIZE; i++)
     {
@@ -226,20 +263,25 @@ osrmsFile *os_open(int process_id, char *file_name, char mode)
         strncpy(entry_file_name, (char *)&file_entry[1], 14);
         entry_file_name[14] = '\0';
 
-        if (mode == 'r' && file_validity == 0x01 && strcmp(entry_file_name, file_name) == 0)
+        if (file_validity == 0x01)
         {
-            osrmsFile *file = (osrmsFile *)malloc(sizeof(osrmsFile));
-            strncpy(file->file_name, entry_file_name, 15);
-            file->process_id = process_id;
-            file->size = *(unsigned int *)&file_entry[15];
-            file->vaddr = *(unsigned int *)&file_entry[19];
-            file->mode = mode;
-            return file;
-        }
+            file_count++;
 
-        if (mode == 'w' && file_validity == 0x01 && strcmp(entry_file_name, file_name) == 0)
-        {
-            return NULL;
+            if (mode == 'r' && strcmp(entry_file_name, file_name) == 0)
+            {
+                osrmsFile *file = (osrmsFile *)malloc(sizeof(osrmsFile));
+                strncpy(file->file_name, entry_file_name, 15);
+                file->process_id = process_id;
+                file->size = *(unsigned int *)&file_entry[15];
+                file->vaddr = *(unsigned int *)&file_entry[19];
+                file->mode = mode;
+                return file;
+            }
+
+            if (mode == 'w' && strcmp(entry_file_name, file_name) == 0)
+            {
+                return NULL;
+            }
         }
 
         if (mode == 'w' && file_validity == 0x00)
@@ -247,18 +289,15 @@ osrmsFile *os_open(int process_id, char *file_name, char mode)
             file_entry[0] = 0x01;
             strncpy((char *)&file_entry[1], file_name, 14);
 
-            // Initialize the file size and virtual address (for now, size = 0)
             unsigned int initial_size = 0;
-            unsigned int initial_vaddr = 0x0; // Assuming this is the starting address (needs adjustment based on the system)
+            unsigned int initial_vaddr = 0x0;
 
             memcpy(&file_entry[15], &initial_size, 4);
             memcpy(&file_entry[19], &initial_vaddr, 4);
 
-            // Write the updated PCB entry back into memory
             fseek(global_memory_file, pcb_offset, SEEK_SET);
             fwrite(pcb_entry, PCB_ENTRY_SIZE, 1, global_memory_file);
 
-            // Allocate memory for the osrmsFile structure and return it
             osrmsFile *file = (osrmsFile *)malloc(sizeof(osrmsFile));
             strncpy(file->file_name, file_name, 15);
             file->process_id = process_id;
@@ -269,6 +308,11 @@ osrmsFile *os_open(int process_id, char *file_name, char mode)
         }
     }
 
-    // If no matching file is found in 'r' mode, or no space for a new file in 'w' mode, return NULL
+    if (mode == 'w' && file_count >= FILE_TABLE_SIZE)
+    {
+        printf("No more space to create new files for process ID %d.\n", process_id);
+        return NULL;
+    }
+
     return NULL;
 }
