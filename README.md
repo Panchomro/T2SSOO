@@ -47,7 +47,6 @@ Hemos implementado las siguientes funciones de la API OSRMS:
 - **`void os_finish_process(int process_id)`**  
   Termina el proceso con el ID especificado, liberando toda la memoria asignada y actualizando la Tabla de PCBs.
 
----
 
 ### **Funciones para Archivos**
 
